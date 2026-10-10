@@ -1,0 +1,54 @@
+# Fire TV / Android build — run manually from the Actions tab (workflow_dispatch).
+# Produces installable debug-signed APKs (arm64, armv7 and one universal) as artifacts.
+name: Android TV APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: 'stable'
+          cache: true
+
+      - name: Apply Fire TV patch (if tv-fire-tv.patch is in the repo root)
+        shell: bash
+        run: |
+          if [ -f tv-fire-tv.patch ]; then
+            git apply --whitespace=nowarn tv-fire-tv.patch
+            echo "Fire TV patch applied"
+          else
+            echo "No patch file found, building repo as-is"
+          fi
+
+      - name: Create .env
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.ENV_FILE }}" ]; then
+            echo "${{ secrets.ENV_FILE }}" > .env
+          elif [ -n "${{ secrets.DOTENV }}" ]; then
+            echo "${{ secrets.DOTENV }}" > .env
+          else
+            touch .env
+          fi
+
+      - run: flutter pub get
+
+      - name: Build split APKs (Fire TV Stick = armv7 / 4K Max = arm64)
+        run: flutter build apk --release --split-per-abi --dart-define-from-file=.env
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: playtornado-tv-apks
+          path: build/app/outputs/flutter-apk/*.apk
