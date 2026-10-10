@@ -1,0 +1,2141 @@
+diff --git a/android/app/src/main/AndroidManifest.xml b/android/app/src/main/AndroidManifest.xml
+index cd2eac8..95d85f2 100644
+--- a/android/app/src/main/AndroidManifest.xml
++++ b/android/app/src/main/AndroidManifest.xml
+@@ -1,4 +1,9 @@
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
++    <!-- Fire TV / Android TV: no touchscreen needed, show up in the TV launcher -->
++    <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
++    <uses-feature android:name="android.software.leanback" android:required="false"/>
++    <uses-feature android:name="android.hardware.faketouch" android:required="false"/>
++
+     <uses-permission android:name="android.permission.INTERNET"/>
+     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+@@ -30,7 +35,8 @@
+         android:name="${applicationName}"
+         android:usesCleartextTraffic="true"
+         android:extractNativeLibs="true"
+-        android:icon="@mipmap/ic_launcher">
++        android:icon="@mipmap/ic_launcher"
++        android:banner="@mipmap/ic_launcher">
+         <activity
+             android:name=".MainActivity"
+             android:exported="true"
+@@ -51,6 +57,7 @@
+             <intent-filter>
+                 <action android:name="android.intent.action.MAIN"/>
+                 <category android:name="android.intent.category.LAUNCHER"/>
++                <category android:name="android.intent.category.LEANBACK_LAUNCHER"/>
+             </intent-filter>
+         </activity>
+ 
+diff --git a/android/app/src/main/kotlin/com/example/playtorrio/MainActivity.kt b/android/app/src/main/kotlin/com/example/playtorrio/MainActivity.kt
+index b67a384..54b6123 100644
+--- a/android/app/src/main/kotlin/com/example/playtorrio/MainActivity.kt
++++ b/android/app/src/main/kotlin/com/example/playtorrio/MainActivity.kt
+@@ -23,6 +23,17 @@ class MainActivity : FlutterActivity() {
+ 
+         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+             when (call.method) {
++                "isTv" -> {
++                    try {
++                        val ui = getSystemService(Context.UI_MODE_SERVICE) as? android.app.UiModeManager
++                        val tv = ui?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION ||
++                            packageManager.hasSystemFeature("amazon.hardware.fire_tv") ||
++                            packageManager.hasSystemFeature("android.software.leanback")
++                        result.success(tv)
++                    } catch (e: Exception) {
++                        result.success(false)
++                    }
++                }
+                 "acquireLocks" -> {
+                     try {
+                         // 1. High-Performance Low-Latency Wi-Fi Lock
+diff --git a/lib/main.dart b/lib/main.dart
+index f938ef2..be42e13 100644
+--- a/lib/main.dart
++++ b/lib/main.dart
+@@ -35,17 +35,22 @@ import './services/p2p/p2p_settings_service.dart';
+ import './services/discord/discord_rpc_service.dart';
+ import './services/scraper/builtin_providers_settings_service.dart';
+ import './widgets/updater/update_dialog.dart';
++import './utils/tv/tv_mode.dart';
++import './widgets/common/tv_focusable.dart';
++import './widgets/common/orientation_toggle.dart';
+ 
+ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+ 
+ void main() async {
+   WidgetsFlutterBinding.ensureInitialized();
+   MediaKit.ensureInitialized();
++  await TvMode.init();
+   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+     await windowManager.ensureInitialized();
+     await WindowService.instance.initialize();
+   }
+   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
++  await TvMode.applyOrientations();
+   await EnvService.initialize();
+   await PlayerSettings.initialize();
+   await Future.wait([
+@@ -145,7 +150,16 @@ class _PlayTorrioAppState extends State<PlayTorrioApp>
+           navigatorKey: navigatorKey,
+           title: 'PlayTorrio',
+           debugShowCheckedModeBanner: false,
+-          theme: AppThemeService.createThemeData(palette),
++          theme: AppThemeService.createThemeData(palette).copyWith(
++            focusColor: kTvFocusBlue.withValues(alpha: 0.5),
++            hoverColor: Colors.white.withValues(alpha: 0.06),
++          ),
++          shortcuts: <ShortcutActivator, Intent>{
++            ...WidgetsApp.defaultShortcuts,
++            const SingleActivator(LogicalKeyboardKey.gameButtonA): const ActivateIntent(),
++          },
++          builder: (context, child) =>
++              OrientationToggleOverlay(child: child ?? const SizedBox.shrink()),
+           scrollBehavior: const MaterialScrollBehavior().copyWith(
+             overscroll: false,
+           ),
+diff --git a/lib/pages/anime/anime_details_modal.dart b/lib/pages/anime/anime_details_modal.dart
+index 8e23337..c65e2cc 100644
+--- a/lib/pages/anime/anime_details_modal.dart
++++ b/lib/pages/anime/anime_details_modal.dart
+@@ -9,6 +9,7 @@ import '../../services/anime/anilist_service.dart';
+ import '../../services/anime/anime_library_service.dart';
+ import '../../services/anime/extractors/anidb_extractor.dart';
+ import '../../widgets/common/performance_liquid_lens.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class AnimeDetailsModal extends StatefulWidget {
+   final AnimeMedia initialAnime;
+@@ -155,7 +156,7 @@ class _AnimeDetailsModalState extends State<AnimeDetailsModal> {
+           widget.onClose();
+         }
+       },
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onClose,
+         child: Container(
+           color: Colors.black.withValues(alpha: 0.85),
+@@ -502,7 +503,7 @@ class _AnimeDetailsModalState extends State<AnimeDetailsModal> {
+                                     ),
+                                     child: Row(
+                                       children: [
+-                                        GestureDetector(
++                                        TvTap(
+                                           onTap: () => setState(() => _isDub = false),
+                                           child: AnimatedContainer(
+                                             duration: const Duration(milliseconds: 180),
+@@ -521,7 +522,7 @@ class _AnimeDetailsModalState extends State<AnimeDetailsModal> {
+                                             ),
+                                           ),
+                                         ),
+-                                        GestureDetector(
++                                        TvTap(
+                                           onTap: () => setState(() => _isDub = true),
+                                           child: AnimatedContainer(
+                                             duration: const Duration(milliseconds: 180),
+@@ -1046,7 +1047,7 @@ class _HoverScaleState extends State<_HoverScale> {
+       onEnter: (_) => setState(() => _hover = true),
+       onExit: (_) => setState(() => _hover = false),
+       cursor: widget.onTap != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: const Duration(milliseconds: 180),
+diff --git a/lib/pages/anime/anime_details_page.dart b/lib/pages/anime/anime_details_page.dart
+index 8f74dab..805f998 100644
+--- a/lib/pages/anime/anime_details_page.dart
++++ b/lib/pages/anime/anime_details_page.dart
+@@ -13,6 +13,7 @@ import '../../utils/navigation/route_transitions.dart';
+ import '../../widgets/common/animated_ambient_background.dart';
+ import '../../widgets/common/slider_arrow.dart';
+ import 'anime_stream_sheet.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class _Space {
+   static const xs = 8.0;
+@@ -821,7 +822,7 @@ class _AnimeDetailsPageState extends State<AnimeDetailsPage>
+   }
+ 
+   Widget _buildSynopsis(String description) {
+-    return GestureDetector(
++    return TvTap(
+       onTap: () => setState(() => _isSynopsisExpanded = !_isSynopsisExpanded),
+       child: AnimatedCrossFade(
+         duration: const Duration(milliseconds: 200),
+@@ -1034,7 +1035,7 @@ class _AnimeDetailsPageState extends State<AnimeDetailsPage>
+                   ),
+                   child: Row(
+                     children: [
+-                      GestureDetector(
++                      TvTap(
+                         onTap: () => setState(() => _isDub = false),
+                         child: Container(
+                           padding: const EdgeInsets.symmetric(
+@@ -1055,7 +1056,7 @@ class _AnimeDetailsPageState extends State<AnimeDetailsPage>
+                           ),
+                         ),
+                       ),
+-                      GestureDetector(
++                      TvTap(
+                         onTap: () => setState(() => _isDub = true),
+                         child: Container(
+                           padding: const EdgeInsets.symmetric(
+@@ -1584,7 +1585,7 @@ class _HoverScaleState extends State<_HoverScale> {
+       cursor: widget.onTap != null
+           ? SystemMouseCursors.click
+           : SystemMouseCursors.basic,
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: const Duration(milliseconds: 180),
+diff --git a/lib/pages/anime/anime_page.dart b/lib/pages/anime/anime_page.dart
+index cd09f6f..b4b05e0 100644
+--- a/lib/pages/anime/anime_page.dart
++++ b/lib/pages/anime/anime_page.dart
+@@ -23,6 +23,7 @@ import 'anime_stream_sheet.dart';
+ import 'anime_search_page.dart';
+ import '../anime_arabic/anime_arabic_details_page.dart';
+ import '../anime_arabic/anime_arabic_stream_sheet.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class AnimePage extends StatefulWidget {
+   const AnimePage({super.key});
+@@ -718,7 +719,7 @@ class _AnimeGlassAppBar extends StatelessWidget {
+     required bool isActive,
+     required VoidCallback onTap,
+   }) {
+-    return GestureDetector(
++    return TvTap(
+       onTap: onTap,
+       child: AnimatedContainer(
+         duration: const Duration(milliseconds: 220),
+@@ -875,7 +876,7 @@ class _AnimeHeroCarouselState extends State<_AnimeHeroCarousel> {
+                   mainAxisAlignment: MainAxisAlignment.center,
+                   children: List.generate(widget.animeList.length, (i) {
+                     final active = i == _index;
+-                    return GestureDetector(
++                    return TvTap(
+                       onTap: () => _goTo(i),
+                       child: AnimatedContainer(
+                         duration: const Duration(milliseconds: 250),
+@@ -1424,7 +1425,7 @@ class _CarouselArrowState extends State<_CarouselArrow> {
+     return MouseRegion(
+       onEnter: (_) => setState(() => _isHoveringArrow = true),
+       onExit: (_) => setState(() => _isHoveringArrow = false),
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: const Duration(milliseconds: 200),
+diff --git a/lib/pages/anime/anime_search_page.dart b/lib/pages/anime/anime_search_page.dart
+index b65a431..9f94683 100644
+--- a/lib/pages/anime/anime_search_page.dart
++++ b/lib/pages/anime/anime_search_page.dart
+@@ -12,6 +12,7 @@ import 'anime_details_page.dart';
+ 
+ import '../../services/anime_arabic/anime_arabic_service.dart';
+ import '../anime_arabic/anime_arabic_details_page.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class AnimeSearchPage extends StatefulWidget {
+   final bool initialArabicMode;
+@@ -589,7 +590,7 @@ class _AnimeSearchPageState extends State<AnimeSearchPage> {
+                         // Language Switcher Pill (General vs Arabic Anime)
+                         Padding(
+                           padding: const EdgeInsets.only(right: 8),
+-                          child: GestureDetector(
++                          child: TvTap(
+                             onTap: () {
+                               setState(() {
+                                 _isArabicMode = !_isArabicMode;
+@@ -639,7 +640,7 @@ class _AnimeSearchPageState extends State<AnimeSearchPage> {
+                         if (!_isArabicMode)
+                           Padding(
+                             padding: const EdgeInsets.only(right: 8),
+-                            child: GestureDetector(
++                            child: TvTap(
+                               onTap: () => _toggleAdult(!_allowAdult),
+                               child: AnimatedContainer(
+                                 duration: const Duration(milliseconds: 200),
+diff --git a/lib/pages/anime/anime_stream_sheet.dart b/lib/pages/anime/anime_stream_sheet.dart
+index bd06ebf..0b004c9 100644
+--- a/lib/pages/anime/anime_stream_sheet.dart
++++ b/lib/pages/anime/anime_stream_sheet.dart
+@@ -8,6 +8,7 @@ import '../../services/theme/app_theme_service.dart';
+ import '../player/player_screen.dart';
+ 
+ import '../../services/anime/extractors/anidb_extractor.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class AnimeStreamSheet extends StatefulWidget {
+   final AnimeMedia anime;
+@@ -418,7 +419,7 @@ class _AnimeStreamSheetState extends State<AnimeStreamSheet> {
+   Widget _buildFilterChip(String label, String category) {
+     final isSelected = _selectedCategory == category;
+     final primaryColor = AppThemeService.currentPalette.value.primaryColor;
+-    return GestureDetector(
++    return TvTap(
+       onTap: () => setState(() => _selectedCategory = category),
+       child: AnimatedContainer(
+         duration: const Duration(milliseconds: 200),
+diff --git a/lib/pages/anime_arabic/anime_arabic_details_page.dart b/lib/pages/anime_arabic/anime_arabic_details_page.dart
+index 457b9ec..ba1f0bd 100644
+--- a/lib/pages/anime_arabic/anime_arabic_details_page.dart
++++ b/lib/pages/anime_arabic/anime_arabic_details_page.dart
+@@ -8,6 +8,7 @@ import '../../utils/navigation/route_transitions.dart';
+ import '../../widgets/common/animated_ambient_background.dart';
+ import '../../widgets/common/slider_arrow.dart';
+ import 'anime_arabic_stream_sheet.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class _Space {
+   static const md = 16.0;
+@@ -583,7 +584,7 @@ class _AnimeArabicDetailsPageState extends State<AnimeArabicDetailsPage>
+                 ),
+               ),
+               if (description.length > 140)
+-                GestureDetector(
++                TvTap(
+                   onTap: () => setState(() => _isSynopsisExpanded = !_isSynopsisExpanded),
+                   child: Padding(
+                     padding: const EdgeInsets.only(top: 6),
+diff --git a/lib/pages/audiobooks/audiobooks_page.dart b/lib/pages/audiobooks/audiobooks_page.dart
+index 2612282..38987aa 100644
+--- a/lib/pages/audiobooks/audiobooks_page.dart
++++ b/lib/pages/audiobooks/audiobooks_page.dart
+@@ -17,6 +17,7 @@ import 'audiobook_detail_page.dart';
+ import 'audiobook_player_screen.dart';
+ import 'audiobook_route_transitions.dart';
+ import 'generate_audiobook_screen.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class AudiobooksPage extends StatefulWidget {
+   const AudiobooksPage({super.key});
+@@ -1463,7 +1464,7 @@ class _ContinueListeningCardState extends State<_ContinueListeningCard> {
+               cursor: SystemMouseCursors.click,
+               onEnter: (_) => setState(() => _isDeleteHovered = true),
+               onExit: (_) => setState(() => _isDeleteHovered = false),
+-              child: GestureDetector(
++              child: TvTap(
+                 onTap: widget.onDelete,
+                 child: AnimatedContainer(
+                   duration: const Duration(milliseconds: 150),
+@@ -1523,7 +1524,7 @@ class _ScrollArrowButtonState extends State<_ScrollArrowButton> {
+       cursor: SystemMouseCursors.click,
+       onEnter: (_) => setState(() => _isHovered = true),
+       onExit: (_) => setState(() => _isHovered = false),
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: const Duration(milliseconds: 150),
+diff --git a/lib/pages/books/books_page.dart b/lib/pages/books/books_page.dart
+index 003c463..e9bcc3e 100644
+--- a/lib/pages/books/books_page.dart
++++ b/lib/pages/books/books_page.dart
+@@ -11,6 +11,7 @@ import '../../widgets/common/custom_scroll_track.dart';
+ import 'book_detail_sheet.dart';
+ import 'widgets/continue_reading_slider.dart';
+ import 'widgets/reader_design_tokens.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class BooksPage extends StatefulWidget {
+   const BooksPage({super.key});
+@@ -484,7 +485,7 @@ class _BookCardState extends State<_BookCard> {
+       cursor: SystemMouseCursors.click,
+       onEnter: (_) => setState(() => _hovered = true),
+       onExit: (_) => setState(() => _hovered = false),
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: ReaderTokens.motionFast,
+diff --git a/lib/pages/books/widgets/continue_reading_slider.dart b/lib/pages/books/widgets/continue_reading_slider.dart
+index 97adedb..854ca05 100644
+--- a/lib/pages/books/widgets/continue_reading_slider.dart
++++ b/lib/pages/books/widgets/continue_reading_slider.dart
+@@ -7,6 +7,7 @@ import '../../../models/book/reading_progress.dart';
+ import '../../../services/books/continue_reading_service.dart';
+ import '../epub_reader_page.dart';
+ import '../pdf_reader_page.dart';
++import '../../../widgets/common/tv_focusable.dart';
+ 
+ class ContinueReadingSlider extends StatefulWidget {
+   final String title;
+@@ -285,7 +286,7 @@ class _ContinueReadingCardState extends State<_ContinueReadingCard> {
+       cursor: SystemMouseCursors.click,
+       onEnter: (_) => setState(() => _hovered = true),
+       onExit: (_) => setState(() => _hovered = false),
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: const Duration(milliseconds: 180),
+@@ -374,7 +375,7 @@ class _ContinueReadingCardState extends State<_ContinueReadingCard> {
+                     Positioned(
+                       top: 6,
+                       right: 6,
+-                      child: GestureDetector(
++                      child: TvTap(
+                         onTap: widget.onRemove,
+                         child: Container(
+                           padding: const EdgeInsets.all(5),
+diff --git a/lib/pages/books/widgets/epub_content_view.dart b/lib/pages/books/widgets/epub_content_view.dart
+index e0d7d60..0677433 100644
+--- a/lib/pages/books/widgets/epub_content_view.dart
++++ b/lib/pages/books/widgets/epub_content_view.dart
+@@ -5,6 +5,7 @@ import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart
+ import 'package:photo_view/photo_view.dart';
+ import '../../../services/books/epub_parser_service.dart';
+ import '../../../services/books/reader_settings.dart';
++import '../../../widgets/common/tv_focusable.dart';
+ 
+ class EpubContentView extends StatelessWidget {
+   final EpubBookData book;
+@@ -88,7 +89,7 @@ class EpubContentView extends StatelessWidget {
+     return Padding(
+       padding: const EdgeInsets.symmetric(vertical: 16),
+       child: Center(
+-        child: GestureDetector(
++        child: TvTap(
+           onTap: () => _openImageZoom(context, bytes),
+           child: Container(
+             constraints: const BoxConstraints(maxHeight: 520),
+diff --git a/lib/pages/books/widgets/reader_customization_sheet.dart b/lib/pages/books/widgets/reader_customization_sheet.dart
+index 7802590..d03cba5 100644
+--- a/lib/pages/books/widgets/reader_customization_sheet.dart
++++ b/lib/pages/books/widgets/reader_customization_sheet.dart
+@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
+ import 'package:flutter/services.dart';
+ import '../../../services/books/reader_settings.dart';
+ import 'reader_design_tokens.dart';
++import '../../../widgets/common/tv_focusable.dart';
+ 
+ class ReaderCustomizationSheet extends StatefulWidget {
+   final String? realBookSampleText;
+@@ -614,7 +615,7 @@ class _ReaderCustomizationSheetState extends State<ReaderCustomizationSheet>
+   }) {
+     final isSelected = theme == current;
+     return Expanded(
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: () {
+           HapticFeedback.lightImpact();
+           ReaderSettings.updateTheme(theme);
+diff --git a/lib/pages/calendar/tv_calendar_page.dart b/lib/pages/calendar/tv_calendar_page.dart
+index 7ce5257..98a8862 100644
+--- a/lib/pages/calendar/tv_calendar_page.dart
++++ b/lib/pages/calendar/tv_calendar_page.dart
+@@ -7,6 +7,7 @@ import '../../services/calendar/tv_calendar_service.dart';
+ import '../../services/theme/app_theme_service.dart';
+ import '../../widgets/common/animated_ambient_background.dart';
+ import '../details/details_page.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class TvCalendarPage extends StatefulWidget {
+   const TvCalendarPage({super.key});
+@@ -872,7 +873,7 @@ class _EpisodeCalendarCardState extends State<_EpisodeCalendarCard> {
+       onEnter: (_) => setState(() => _isHovered = true),
+       onExit: (_) => setState(() => _isHovered = false),
+       cursor: SystemMouseCursors.click,
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: const Duration(milliseconds: 180),
+diff --git a/lib/pages/catalog/catalog_page.dart b/lib/pages/catalog/catalog_page.dart
+index 1173d60..dab9b41 100644
+--- a/lib/pages/catalog/catalog_page.dart
++++ b/lib/pages/catalog/catalog_page.dart
+@@ -7,6 +7,7 @@ import '../../models/movie/movie_section.dart';
+ import '../../services/metadata/metadata_service.dart';
+ import '../../widgets/common/error_view.dart';
+ import '../../widgets/movie/movie_card.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class CatalogPage extends StatefulWidget {
+   final MovieSection section;
+@@ -526,7 +527,7 @@ class _CatalogPageState extends State<CatalogPage> {
+         duration: const Duration(milliseconds: 200),
+         child: IgnorePointer(
+           ignoring: !isVisible,
+-          child: GestureDetector(
++          child: TvTap(
+             onTap: onTap,
+             child: Container(
+               margin: const EdgeInsets.symmetric(horizontal: 4),
+@@ -558,7 +559,7 @@ class _GenreChip extends StatelessWidget {
+ 
+   @override
+   Widget build(BuildContext context) {
+-    return GestureDetector(
++    return TvTap(
+       onTap: onTap,
+       child: AnimatedContainer(
+         duration: const Duration(milliseconds: 200),
+diff --git a/lib/pages/details/details_page.dart b/lib/pages/details/details_page.dart
+index a2436ee..7266529 100644
+--- a/lib/pages/details/details_page.dart
++++ b/lib/pages/details/details_page.dart
+@@ -13,6 +13,7 @@ import '../../services/cloudstream/cloudstream_manager.dart';
+ import '../../utils/navigation/route_transitions.dart';
+ import '../discover/discover_page.dart';
+ import '../player/watch_screen.dart';
++import '../../widgets/common/tv_focusable.dart';
+ // ---------------------------------------------------------------------------
+ // Design tokens
+ // ---------------------------------------------------------------------------
+@@ -1096,7 +1097,7 @@ class _DetailsPageState extends State<DetailsPage> with SingleTickerProviderStat
+             ),
+             if (isOverflowing) ...[
+               const SizedBox(height: _Space.xs),
+-              GestureDetector(
++              TvTap(
+                 onTap: () => setState(() => _isSynopsisExpanded = !_isSynopsisExpanded),
+                 child: Text(
+                   _isSynopsisExpanded ? 'Show less' : 'Read more',
+@@ -1837,7 +1838,7 @@ class _EpisodeCardState extends State<_EpisodeCard> {
+       cursor: SystemMouseCursors.click,
+       onEnter: (_) => setState(() => _hovered = true),
+       onExit: (_) => setState(() => _hovered = false),
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap ?? () {},
+         child: AnimatedScale(
+           scale: _hovered ? 1.03 : 1.0,
+diff --git a/lib/pages/discover/discover_page.dart b/lib/pages/discover/discover_page.dart
+index ea05533..536d438 100644
+--- a/lib/pages/discover/discover_page.dart
++++ b/lib/pages/discover/discover_page.dart
+@@ -10,6 +10,7 @@ import '../../services/theme/dock_settings.dart';
+ import '../../widgets/common/app_liquid_dock.dart';
+ import '../../widgets/common/error_view.dart';
+ import '../../widgets/movie/movie_card.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class DiscoverPage extends StatefulWidget {
+   final String? query;
+@@ -911,7 +912,7 @@ class _DiscoverPageState extends State<DiscoverPage> {
+ 
+                             return Padding(
+                               padding: const EdgeInsets.only(right: 8),
+-                              child: GestureDetector(
++                              child: TvTap(
+                                 onTap: () => _onCatalogChanged(entry),
+                                 child: AnimatedContainer(
+                                   duration: const Duration(milliseconds: 200),
+@@ -1077,7 +1078,7 @@ class _DiscoverPageState extends State<DiscoverPage> {
+                       // Text input chip for freeform extras (or search if isRequired)
+                       return Padding(
+                         padding: const EdgeInsets.only(right: 8),
+-                        child: GestureDetector(
++                        child: TvTap(
+                           onTap: () => _showCustomExtraDialog(extra.name),
+                           child: Container(
+                             padding: EdgeInsets.symmetric(
+diff --git a/lib/pages/downloads/downloads_page.dart b/lib/pages/downloads/downloads_page.dart
+index 7f0b3ac..4cc5f90 100644
+--- a/lib/pages/downloads/downloads_page.dart
++++ b/lib/pages/downloads/downloads_page.dart
+@@ -10,6 +10,7 @@ import '../../services/download/download_service.dart';
+ import '../../utils/platform/open_file_location_helper.dart';
+ import '../../utils/download/download_path_helper.dart';
+ import '../player/player_screen.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class DownloadsPage extends StatefulWidget {
+   const DownloadsPage({super.key});
+@@ -523,7 +524,7 @@ class _DownloadsPageState extends State<DownloadsPage> with SingleTickerProvider
+ 
+                   // Center Play Button
+                   Center(
+-                    child: GestureDetector(
++                    child: TvTap(
+                       onTap: () => _playDownloadedMedia(task),
+                       child: Container(
+                         width: 44,
+@@ -551,7 +552,7 @@ class _DownloadsPageState extends State<DownloadsPage> with SingleTickerProvider
+                   Positioned(
+                     top: 6,
+                     left: 6,
+-                    child: GestureDetector(
++                    child: TvTap(
+                       onTap: () async {
+                         final opened = await OpenFileLocationHelper.openLocation(task.targetFilePath);
+                         if (!opened && mounted) {
+@@ -579,7 +580,7 @@ class _DownloadsPageState extends State<DownloadsPage> with SingleTickerProvider
+                   Positioned(
+                     top: 6,
+                     right: 6,
+-                    child: GestureDetector(
++                    child: TvTap(
+                       onTap: () => _confirmDelete(task),
+                       child: Container(
+                         padding: const EdgeInsets.all(5),
+diff --git a/lib/pages/home/home_page.dart b/lib/pages/home/home_page.dart
+index baf0539..cb82f39 100644
+--- a/lib/pages/home/home_page.dart
++++ b/lib/pages/home/home_page.dart
+@@ -36,6 +36,7 @@ import '../../services/p2p/p2p_settings_service.dart';
+ import '../../widgets/p2p/p2p_warning_dialog.dart';
+ import 'package:flutter/services.dart';
+ import '../../services/window/window_service.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class HomePage extends StatefulWidget {
+   const HomePage({super.key});
+@@ -947,7 +948,7 @@ class _HeroCarouselState extends State<_HeroCarousel> {
+                     final dotColor = active
+                         ? (isSupportDot ? const Color(0xFFFFD700) : primaryColor)
+                         : Colors.white.withValues(alpha: 0.30);
+-                    return GestureDetector(
++                    return TvTap(
+                       onTap: () => _goTo(i),
+                       child: AnimatedContainer(
+                         duration: const Duration(milliseconds: 250),
+@@ -1030,7 +1031,7 @@ class _CarouselArrowState extends State<_CarouselArrow> {
+     return MouseRegion(
+       onEnter: (_) => setState(() => _isHoveringArrow = true),
+       onExit: (_) => setState(() => _isHoveringArrow = false),
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: const Duration(milliseconds: 200),
+@@ -1766,7 +1767,7 @@ class _HoverArrowState extends State<_HoverArrow> {
+     return MouseRegion(
+       onEnter: (_) => setState(() => _isHovering = true),
+       onExit: (_) => setState(() => _isHovering = false),
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: const Duration(milliseconds: 200),
+diff --git a/lib/pages/iptv/iptv_channel_sheet.dart b/lib/pages/iptv/iptv_channel_sheet.dart
+index 867dce7..3f75b56 100644
+--- a/lib/pages/iptv/iptv_channel_sheet.dart
++++ b/lib/pages/iptv/iptv_channel_sheet.dart
+@@ -4,6 +4,7 @@ import '../../services/iptv/hardcoded_channels.dart';
+ import '../../services/iptv/iptv_controller.dart';
+ import '../../utils/navigation/route_transitions.dart';
+ import 'iptv_player_page.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class IptvChannelSheet extends StatefulWidget {
+   final HardcodedChannel channel;
+@@ -422,7 +423,7 @@ class _IptvChannelSheetState extends State<IptvChannelSheet> {
+                         ),
+                       ),
+                       if (isScanning)
+-                        GestureDetector(
++                        TvTap(
+                           onTap: _ctrl.stopChannelSearch,
+                           child: const Text(
+                             'Stop',
+@@ -520,7 +521,7 @@ class _IptvChannelSheetState extends State<IptvChannelSheet> {
+ 
+                               return MouseRegion(
+                                 cursor: SystemMouseCursors.click,
+-                                child: GestureDetector(
++                                child: TvTap(
+                                   onTap: () => _isSelecting
+                                       ? _toggleSelection(hit.streamUrl)
+                                       : _playHit(hit),
+diff --git a/lib/pages/iptv/iptv_page.dart b/lib/pages/iptv/iptv_page.dart
+index 7762d00..0df4d44 100644
+--- a/lib/pages/iptv/iptv_page.dart
++++ b/lib/pages/iptv/iptv_page.dart
+@@ -23,6 +23,7 @@ import 'iptv_channel_sheet.dart';
+ import 'iptv_player_page.dart';
+ import 'iptv_portals_modal.dart';
+ import 'iptv_search_page.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class IptvPage extends StatefulWidget {
+   const IptvPage({super.key});
+@@ -937,7 +938,7 @@ class _QuickChannelCardState extends State<_QuickChannelCard> {
+     return MouseRegion(
+       onEnter: (_) => setState(() => _hovered = true),
+       onExit: (_) => setState(() => _hovered = false),
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         onLongPress: widget.onRemove,
+         child: Stack(
+@@ -994,7 +995,7 @@ class _QuickChannelCardState extends State<_QuickChannelCard> {
+             Positioned(
+               top: 4,
+               right: 4,
+-              child: GestureDetector(
++              child: TvTap(
+                 onTap: widget.onRemove,
+                 child: Container(
+                   padding: const EdgeInsets.all(3),
+@@ -1016,7 +1017,7 @@ class _QuickAddCard extends StatelessWidget {
+ 
+   @override
+   Widget build(BuildContext context) {
+-    return GestureDetector(
++    return TvTap(
+       onTap: onTap,
+       child: Container(
+         decoration: BoxDecoration(
+@@ -1170,7 +1171,7 @@ class _AddQuickChannelDialogState extends State<_AddQuickChannelDialog> {
+                   spacing: 8,
+                   children: _presetGradients.map((g) {
+                     final isSelected = _gradient == g;
+-return GestureDetector(
++return TvTap(
+                       onTap: () => setState(() => _gradient = g),
+                       child: Container(
+                         width: 36,
+diff --git a/lib/pages/iptv/iptv_player_page.dart b/lib/pages/iptv/iptv_player_page.dart
+index e34c2be..81e703b 100644
+--- a/lib/pages/iptv/iptv_player_page.dart
++++ b/lib/pages/iptv/iptv_player_page.dart
+@@ -1,3 +1,4 @@
++import '../../utils/tv/tv_mode.dart';
+ import 'dart:async';
+ import 'dart:io';
+ import 'package:cached_network_image/cached_network_image.dart';
+@@ -167,7 +168,7 @@ class _IptvPlayerPageState extends State<IptvPlayerPage>
+       WindowService.instance.exitFullscreen();
+     }
+     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+-    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
++    SystemChrome.setPreferredOrientations(TvMode.appOrientations);
+     DiscordRpcService.instance.clearToIdle();
+     super.dispose();
+   }
+diff --git a/lib/pages/iptv/iptv_portal_browser_page.dart b/lib/pages/iptv/iptv_portal_browser_page.dart
+index e961989..0b69e76 100644
+--- a/lib/pages/iptv/iptv_portal_browser_page.dart
++++ b/lib/pages/iptv/iptv_portal_browser_page.dart
+@@ -12,6 +12,7 @@ import '../../services/iptv/iptv_storage.dart';
+ import '../../services/discord/discord_rpc_service.dart';
+ import '../../utils/navigation/route_transitions.dart';
+ import 'iptv_player_page.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class IptvPortalBrowserPage extends StatefulWidget {
+   final VerifiedPortal? portal;
+@@ -1309,7 +1310,7 @@ class _IptvPortalBrowserPageState extends State<IptvPortalBrowserPage> {
+ 
+     return MouseRegion(
+       cursor: SystemMouseCursors.click,
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: () {
+           if (_activeSection != section) {
+             setState(() => _activeSection = section);
+@@ -1591,7 +1592,7 @@ class _CategoryListRowState extends State<_CategoryListRow> {
+         cursor: SystemMouseCursors.click,
+         onEnter: (_) => setState(() => _hovered = true),
+         onExit: (_) => setState(() => _hovered = false),
+-        child: GestureDetector(
++        child: TvTap(
+           onTap: widget.onTap,
+           child: AnimatedContainer(
+             duration: const Duration(milliseconds: 120),
+@@ -1735,7 +1736,7 @@ class _LiveChannelListRowState extends State<_LiveChannelListRow> {
+           _loadEpg();
+         },
+         onExit: (_) => setState(() => _hovered = false),
+-        child: GestureDetector(
++        child: TvTap(
+           onTap: widget.onTap,
+           child: AnimatedContainer(
+             duration: const Duration(milliseconds: 120),
+@@ -1960,7 +1961,7 @@ class _LiveChannelGridCardState extends State<_LiveChannelGridCard> {
+         cursor: SystemMouseCursors.click,
+         onEnter: (_) => setState(() => _hovered = true),
+         onExit: (_) => setState(() => _hovered = false),
+-        child: GestureDetector(
++        child: TvTap(
+           onTap: widget.onTap,
+           child: AnimatedContainer(
+             duration: const Duration(milliseconds: 140),
+@@ -2035,7 +2036,7 @@ class _LiveChannelGridCardState extends State<_LiveChannelGridCard> {
+                         child: const Text('LIVE', style: TextStyle(color: Colors.greenAccent, fontSize: 9, fontWeight: FontWeight.w900)),
+                       ),
+ 
+-                    GestureDetector(
++                    TvTap(
+                       onTap: widget.onToggleFavorite,
+                       child: Icon(
+                         widget.isFavorite ? Icons.star_rounded : Icons.star_outline_rounded,
+@@ -2142,7 +2143,7 @@ class _LiveChannelCompactListRowState extends State<_LiveChannelCompactListRow>
+         cursor: SystemMouseCursors.click,
+         onEnter: (_) => setState(() => _hovered = true),
+         onExit: (_) => setState(() => _hovered = false),
+-        child: GestureDetector(
++        child: TvTap(
+           onTap: widget.onTap,
+           child: AnimatedContainer(
+             duration: const Duration(milliseconds: 120),
+@@ -2199,7 +2200,7 @@ class _LiveChannelCompactListRowState extends State<_LiveChannelCompactListRow>
+                     child: const Text('LIVE', style: TextStyle(color: Colors.greenAccent, fontSize: 9, fontWeight: FontWeight.w900)),
+                   ),
+                 ],
+-                GestureDetector(
++                TvTap(
+                   onTap: widget.onToggleFavorite,
+                   child: Icon(
+                     widget.isFavorite ? Icons.star_rounded : Icons.star_outline_rounded,
+@@ -2254,7 +2255,7 @@ class _VodSeriesCardState extends State<_VodSeriesCard> {
+         cursor: SystemMouseCursors.click,
+         onEnter: (_) => setState(() => _hovered = true),
+         onExit: (_) => setState(() => _hovered = false),
+-        child: GestureDetector(
++        child: TvTap(
+           onTap: widget.onTap,
+           child: AnimatedScale(
+             duration: const Duration(milliseconds: 140),
+@@ -2566,7 +2567,7 @@ class _VerticalScrollButtonState extends State<_VerticalScrollButton> {
+       cursor: SystemMouseCursors.click,
+       onEnter: (_) => setState(() => _hovered = true),
+       onExit: (_) => setState(() => _hovered = false),
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: const Duration(milliseconds: 140),
+diff --git a/lib/pages/iptv/iptv_search_page.dart b/lib/pages/iptv/iptv_search_page.dart
+index 4fc4b28..edb25dc 100644
+--- a/lib/pages/iptv/iptv_search_page.dart
++++ b/lib/pages/iptv/iptv_search_page.dart
+@@ -3,6 +3,7 @@ import '../../models/iptv/iptv_models.dart';
+ import '../../services/iptv/hardcoded_channels.dart';
+ import '../../widgets/iptv/iptv_channel_card.dart';
+ import 'iptv_channel_sheet.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class IptvSearchPage extends StatefulWidget {
+   final List<QuickChannel> quickChannels;
+@@ -158,7 +159,7 @@ class _IptvSearchPageState extends State<IptvSearchPage> {
+                 final cat = _categories[index];
+                 final isSelected = _selectedCategory == cat;
+ 
+-                return GestureDetector(
++                return TvTap(
+                   onTap: () => setState(() => _selectedCategory = cat),
+                   child: AnimatedContainer(
+                     duration: const Duration(milliseconds: 180),
+diff --git a/lib/pages/manga/manga_details_page.dart b/lib/pages/manga/manga_details_page.dart
+index 93926bf..4d5cfba 100644
+--- a/lib/pages/manga/manga_details_page.dart
++++ b/lib/pages/manga/manga_details_page.dart
+@@ -7,6 +7,7 @@ import '../../models/manga/manga_chapter.dart';
+ import '../../services/theme/app_theme_service.dart';
+ import '../../services/manga/manga_service.dart';
+ import 'manga_reader_page.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class MangaDetailsPage extends StatefulWidget {
+   final Manga manga;
+@@ -775,7 +776,7 @@ class _MangaDetailsPageState extends State<MangaDetailsPage> {
+       width: isFullWidth ? double.infinity : null,
+       child: MouseRegion(
+         cursor: SystemMouseCursors.click,
+-        child: GestureDetector(
++        child: TvTap(
+           onTap: onTap,
+           child: Container(
+             padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
+diff --git a/lib/pages/manga/manga_page.dart b/lib/pages/manga/manga_page.dart
+index 6fe492f..aea4e7b 100644
+--- a/lib/pages/manga/manga_page.dart
++++ b/lib/pages/manga/manga_page.dart
+@@ -17,6 +17,7 @@ import '../../widgets/manga/manga_card.dart';
+ import '../../widgets/manga/manga_category_dropdown.dart';
+ import '../settings/appearance/manga_settings_page.dart';
+ import 'manga_reader_page.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class MangaPage extends StatefulWidget {
+   const MangaPage({super.key});
+@@ -920,7 +921,7 @@ class _ContinueReadingSliderState extends State<_ContinueReadingSlider> {
+         ? chaptersList[chapterIndex]['name'] ?? 'Chapter ${chaptersList[chapterIndex]['number']}'
+         : 'Resume';
+ 
+-    return GestureDetector(
++    return TvTap(
+       onTap: () => widget.onResume(entry),
+       child: MouseRegion(
+         cursor: SystemMouseCursors.click,
+diff --git a/lib/pages/multinutz/multinutz_page.dart b/lib/pages/multinutz/multinutz_page.dart
+index e7e13c2..6fb46f1 100644
+--- a/lib/pages/multinutz/multinutz_page.dart
++++ b/lib/pages/multinutz/multinutz_page.dart
+@@ -1,3 +1,4 @@
++import '../../utils/tv/tv_mode.dart';
+ import 'dart:async';
+ import 'package:flutter/material.dart';
+ import 'package:flutter/services.dart';
+@@ -84,12 +85,7 @@ class _MultiNutzPageState extends State<MultiNutzPage>
+ 
+     // Allow all orientations (portrait + landscape)
+     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+-    SystemChrome.setPreferredOrientations([
+-      DeviceOrientation.portraitUp,
+-      DeviceOrientation.portraitDown,
+-      DeviceOrientation.landscapeLeft,
+-      DeviceOrientation.landscapeRight,
+-    ]);
++    SystemChrome.setPreferredOrientations(TvMode.appOrientations);
+ 
+     _initPlayers();
+     _restoreSession();
+@@ -807,12 +803,7 @@ if (i < quickChannels.length) {
+ 
+     // Restore orientation
+     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+-    SystemChrome.setPreferredOrientations([
+-      DeviceOrientation.portraitUp,
+-      DeviceOrientation.portraitDown,
+-      DeviceOrientation.landscapeLeft,
+-      DeviceOrientation.landscapeRight,
+-    ]);
++    SystemChrome.setPreferredOrientations(TvMode.appOrientations);
+     super.dispose();
+   }
+ 
+diff --git a/lib/pages/music/music_page.dart b/lib/pages/music/music_page.dart
+index 0ff1ade..b352329 100644
+--- a/lib/pages/music/music_page.dart
++++ b/lib/pages/music/music_page.dart
+@@ -23,6 +23,7 @@ import '../settings/appearance/music_player_studio_page.dart';
+ import '../settings/appearance/music_settings_page.dart';
+ import '../settings/settings_page.dart';
+ import '../../utils/navigation/route_transitions.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class MusicPage extends StatefulWidget {
+   const MusicPage({super.key});
+@@ -1183,7 +1184,7 @@ class _MusicPageState extends State<MusicPage> {
+                   final artist = _searchData.artists[index];
+                   return _MusicHoverable(
+                     scaleFactor: 1.06,
+-                    child: GestureDetector(
++                    child: TvTap(
+                       onTap: () => _openArtistModal(artist.id),
+                       child: Column(
+                         children: [
+@@ -1296,7 +1297,7 @@ class _MusicPageState extends State<MusicPage> {
+ 
+     return _MusicHoverable(
+       scaleFactor: 1.05,
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: () {
+           setState(() {
+             if (label.startsWith('Tracks')) {
+@@ -1381,7 +1382,7 @@ class _MusicPageState extends State<MusicPage> {
+             final color = g['color'] as Color;
+             return _MusicHoverable(
+               scaleFactor: 1.04,
+-              child: GestureDetector(
++              child: TvTap(
+                 onTap: () => _onGenreTap(g['query'] as String),
+                 child: PerformanceLiquidLens(
+                   style: PerformanceGlassStyles.menu,
+@@ -1469,7 +1470,7 @@ class _MusicPageState extends State<MusicPage> {
+             final color = station['color'] as Color;
+             return _MusicHoverable(
+               scaleFactor: 1.04,
+-              child: GestureDetector(
++              child: TvTap(
+                 onTap: () => _onGenreTap(station['query'] as String),
+                 child: PerformanceLiquidLens(
+                   style: PerformanceGlassStyles.menu,
+@@ -1550,7 +1551,7 @@ class _MusicPageState extends State<MusicPage> {
+         // Liked Songs Banner
+         _MusicHoverable(
+           scaleFactor: 1.02,
+-          child: GestureDetector(
++          child: TvTap(
+             onTap: () {
+               if (liked.isNotEmpty) {
+                 _playerController.playTrack(liked.first, playlistQueue: liked);
+@@ -1651,7 +1652,7 @@ class _MusicPageState extends State<MusicPage> {
+ 
+             return _MusicHoverable(
+               scaleFactor: 1.02,
+-              child: GestureDetector(
++              child: TvTap(
+                 onTap: () {
+                   setState(() => _showDownloadsModal = true);
+                 },
+@@ -1786,7 +1787,7 @@ class _MusicPageState extends State<MusicPage> {
+               final pl = playlists[index];
+               return _MusicHoverable(
+                 scaleFactor: 1.04,
+-                child: GestureDetector(
++                child: TvTap(
+                   onTap: () => setState(() => _activeUserPlaylistModal = pl),
+                   child: Container(
+                     decoration: BoxDecoration(
+@@ -2803,7 +2804,7 @@ class _MusicMobileBottomNav extends StatelessWidget {
+   Widget _navItem(String label, IconData icon) {
+     final isSelected = activeTab == label;
+     return Expanded(
+-      child: GestureDetector(
++      child: TvTap(
+         behavior: HitTestBehavior.opaque,
+         onTap: () => onTabSelected(label),
+         child: SizedBox(
+@@ -3016,7 +3017,7 @@ class _MusicTrendingArtists extends StatelessWidget {
+         final artist = artists[index];
+         return _MusicHoverable(
+           scaleFactor: 1.06,
+-          child: GestureDetector(
++          child: TvTap(
+             onTap: () => onArtistTap(artist),
+             child: Column(
+               children: [
+@@ -3158,7 +3159,7 @@ class _MusicTrackCard extends StatelessWidget {
+   Widget build(BuildContext context) {
+     return _MusicHoverable(
+       scaleFactor: 1.05,
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: onTap,
+         child: SizedBox(
+           width: 145,
+@@ -3236,7 +3237,7 @@ class _MusicAlbumCard extends StatelessWidget {
+   Widget build(BuildContext context) {
+     return _MusicHoverable(
+       scaleFactor: 1.05,
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: onTap,
+         child: SizedBox(
+           width: 145,
+@@ -3294,7 +3295,7 @@ class _MusicPlaylistCard extends StatelessWidget {
+   Widget build(BuildContext context) {
+     return _MusicHoverable(
+       scaleFactor: 1.05,
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: onTap,
+         child: SizedBox(
+           width: 145,
+@@ -3541,7 +3542,7 @@ class _MusicBottomPlayerBar extends StatelessWidget {
+     final palette = AppThemeService.currentPalette.value;
+     final preset = MusicSettings.selectedMiniPreset.value;
+ 
+-    return GestureDetector(
++    return TvTap(
+       onTap: onExpandTap,
+       child: PerformanceLiquidLens(
+         style: PerformanceGlassStyles.dock,
+@@ -3991,7 +3992,7 @@ class _MusicLyricsDrawer extends StatelessWidget {
+                   itemBuilder: (context, index) {
+                     final line = lyrics.syncedLines[index];
+                     final isActive = index == activeIndex;
+-                    return GestureDetector(
++                    return TvTap(
+                       onTap: () => playerController.seekTo(line.timestamp),
+                       child: Padding(
+                         padding: const EdgeInsets.symmetric(vertical: 8.0),
+@@ -4968,7 +4969,7 @@ class _MusicExpandedPlayerState extends State<_MusicExpandedPlayer> with SingleT
+         children: [
+           // Dismissible Scrim with blur
+           Positioned.fill(
+-            child: GestureDetector(
++            child: TvTap(
+               onTap: widget.onCollapse,
+               child: BackdropFilter(
+                 filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+diff --git a/lib/pages/my_list/my_list_page.dart b/lib/pages/my_list/my_list_page.dart
+index adf6a4a..161c9c7 100644
+--- a/lib/pages/my_list/my_list_page.dart
++++ b/lib/pages/my_list/my_list_page.dart
+@@ -6,6 +6,7 @@ import '../../services/my_list/my_list_service.dart';
+ import '../../utils/navigation/route_transitions.dart';
+ import '../details/details_page.dart';
+ import '../../models/movie/movie.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class MyListPage extends StatefulWidget {
+   const MyListPage({super.key});
+@@ -20,6 +21,125 @@ class _MyListPageState extends State<MyListPage> {
+   String _searchQuery = '';
+   final TextEditingController _searchController = TextEditingController();
+ 
++  // ── Selection mode ──
++  bool _selectionMode = false;
++  final Set<String> _selectedKeys = <String>{};
++
++  void _enterSelection(MyListItem item) {
++    setState(() {
++      _selectionMode = true;
++      _selectedKeys.add(item.uniqueKey);
++    });
++  }
++
++  void _toggleSelect(MyListItem item) {
++    setState(() {
++      final k = item.uniqueKey;
++      if (!_selectedKeys.remove(k)) _selectedKeys.add(k);
++      if (_selectedKeys.isEmpty) _selectionMode = false;
++    });
++  }
++
++  void _exitSelection() {
++    setState(() {
++      _selectionMode = false;
++      _selectedKeys.clear();
++    });
++  }
++
++  void _selectAllOrNone(List<MyListItem> visible) {
++    setState(() {
++      final keys = visible.map((e) => e.uniqueKey).toSet();
++      if (_selectedKeys.containsAll(keys)) {
++        _selectedKeys.removeAll(keys);
++        if (_selectedKeys.isEmpty) _selectionMode = false;
++      } else {
++        _selectedKeys.addAll(keys);
++      }
++    });
++  }
++
++  Future<void> _removeSelected() async {
++    final targets = MyListService.items.value
++        .where((i) => _selectedKeys.contains(i.uniqueKey))
++        .toList();
++    if (targets.isEmpty) return;
++    final confirm = await showDialog<bool>(
++      context: context,
++      builder: (ctx) => AlertDialog(
++        backgroundColor: const Color(0xFF151822),
++        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
++        title: const Text('Remove selected?',
++            style: TextStyle(fontWeight: FontWeight.w800, color: Colors.white)),
++        content: Text(
++          'Remove ${targets.length} item${targets.length == 1 ? '' : 's'} from your list?',
++          style: TextStyle(color: Colors.white.withValues(alpha: 0.7)),
++        ),
++        actions: [
++          TextButton(
++            autofocus: true,
++            onPressed: () => Navigator.pop(ctx, false),
++            child: Text('Cancel',
++                style: TextStyle(color: Colors.white.withValues(alpha: 0.6))),
++          ),
++          ElevatedButton(
++            onPressed: () => Navigator.pop(ctx, true),
++            style: ElevatedButton.styleFrom(
++              backgroundColor: const Color(0xFFE50914),
++              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
++            ),
++            child: const Text('Remove', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
++          ),
++        ],
++      ),
++    );
++    if (confirm == true) {
++      for (final t in targets) {
++        MyListService.remove(t);
++      }
++      if (mounted) _exitSelection();
++    }
++  }
++
++  Widget _buildSelectionBar(List<MyListItem> visible) {
++    final keys = visible.map((e) => e.uniqueKey).toSet();
++    final allSelected = keys.isNotEmpty && _selectedKeys.containsAll(keys);
++    return Container(
++      margin: const EdgeInsets.fromLTRB(16, 0, 16, 10),
++      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
++      decoration: BoxDecoration(
++        color: kTvFocusBlue.withValues(alpha: 0.18),
++        borderRadius: BorderRadius.circular(14),
++        border: Border.all(color: kTvFocusBlue.withValues(alpha: 0.7)),
++      ),
++      child: Row(
++        children: [
++          Text(
++            '${_selectedKeys.length} selected',
++            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15),
++          ),
++          const Spacer(),
++          TextButton.icon(
++            onPressed: () => _selectAllOrNone(visible),
++            icon: Icon(allSelected ? Icons.deselect : Icons.select_all, color: Colors.white),
++            label: Text(allSelected ? 'Deselect all' : 'Select all',
++                style: const TextStyle(color: Colors.white)),
++          ),
++          TextButton.icon(
++            onPressed: _selectedKeys.isEmpty ? null : _removeSelected,
++            icon: const Icon(Icons.delete_outline, color: Color(0xFFFF6B6B)),
++            label: const Text('Remove', style: TextStyle(color: Color(0xFFFF6B6B))),
++          ),
++          TextButton.icon(
++            onPressed: _exitSelection,
++            icon: const Icon(Icons.close, color: Colors.white),
++            label: const Text('Cancel', style: TextStyle(color: Colors.white)),
++          ),
++        ],
++      ),
++    );
++  }
++
+   @override
+   void dispose() {
+     _searchController.dispose();
+@@ -127,6 +247,16 @@ class _MyListPageState extends State<MyListPage> {
+ 
+   @override
+   Widget build(BuildContext context) {
++    return PopScope(
++      canPop: !_selectionMode,
++      onPopInvokedWithResult: (didPop, _) {
++        if (!didPop && _selectionMode) _exitSelection();
++      },
++      child: _buildScaffold(context),
++    );
++  }
++
++  Widget _buildScaffold(BuildContext context) {
+     return Scaffold(
+       backgroundColor: const Color(0xFF080A0F),
+       body: Stack(
+@@ -188,6 +318,8 @@ class _MyListPageState extends State<MyListPage> {
+ 
+                     const SizedBox(height: 12),
+ 
++                    if (_selectionMode) _buildSelectionBar(displayedItems),
++
+                     // ── Grid of Items ──
+                     Expanded(
+                       child: displayedItems.isEmpty
+@@ -208,10 +340,23 @@ class _MyListPageState extends State<MyListPage> {
+                               itemCount: displayedItems.length,
+                               itemBuilder: (context, index) {
+                                 final item = displayedItems[index];
+-                                return _MyListCard(
+-                                  item: item,
+-                                  onTap: () => _navigateToDetail(item),
+-                                  onRemove: () => _confirmRemove(item),
++                                void tap() => _selectionMode
++                                    ? _toggleSelect(item)
++                                    : _navigateToDetail(item);
++                                void hold() => _selectionMode
++                                    ? _toggleSelect(item)
++                                    : _enterSelection(item);
++                                return TvFocusable(
++                                  radius: 16,
++                                  autofocus: index == 0,
++                                  selected: _selectedKeys.contains(item.uniqueKey),
++                                  onTap: tap,
++                                  onLongPress: hold,
++                                  child: _MyListCard(
++                                    item: item,
++                                    onTap: tap,
++                                    onRemove: hold,
++                                  ),
+                                 );
+                               },
+                             ),
+diff --git a/lib/pages/player/player_screen.dart b/lib/pages/player/player_screen.dart
+index ee7162c..3132142 100644
+--- a/lib/pages/player/player_screen.dart
++++ b/lib/pages/player/player_screen.dart
+@@ -1,3 +1,4 @@
++import '../../utils/tv/tv_mode.dart';
+ import 'dart:io';
+ import 'dart:async';
+ import 'package:flutter/foundation.dart';
+@@ -1375,12 +1376,7 @@ class _PlayerScreenState extends State<PlayerScreen>
+     _savePlaybackProgress();
+     WakelockPlus.disable();
+     _hideTimer?.cancel();
+-    SystemChrome.setPreferredOrientations([
+-      DeviceOrientation.portraitUp,
+-      DeviceOrientation.portraitDown,
+-      DeviceOrientation.landscapeLeft,
+-      DeviceOrientation.landscapeRight,
+-    ]);
++    SystemChrome.setPreferredOrientations(TvMode.appOrientations);
+     PlayerSettings.changeNotifier.removeListener(_onPlayerSettingsChanged);
+     _positionNotifier.dispose();
+     _bufferNotifier.dispose();
+@@ -1606,9 +1602,23 @@ class _PlayerScreenState extends State<PlayerScreen>
+                 _toggleMute(showHud: true);
+                 return KeyEventResult.handled;
+               } else if (event.logicalKey == LogicalKeyboardKey.space ||
+-                  event.logicalKey == LogicalKeyboardKey.keyK) {
++                  event.logicalKey == LogicalKeyboardKey.keyK ||
++                  event.logicalKey == LogicalKeyboardKey.select ||
++                  event.logicalKey == LogicalKeyboardKey.enter ||
++                  event.logicalKey == LogicalKeyboardKey.gameButtonA ||
++                  event.logicalKey == LogicalKeyboardKey.mediaPlayPause ||
++                  event.logicalKey == LogicalKeyboardKey.mediaPlay ||
++                  event.logicalKey == LogicalKeyboardKey.mediaPause) {
+                 _togglePlayPause();
+                 return KeyEventResult.handled;
++              } else if (event.logicalKey == LogicalKeyboardKey.mediaFastForward ||
++                  event.logicalKey == LogicalKeyboardKey.mediaTrackNext) {
++                _seekRelative(const Duration(seconds: 30));
++                return KeyEventResult.handled;
++              } else if (event.logicalKey == LogicalKeyboardKey.mediaRewind ||
++                  event.logicalKey == LogicalKeyboardKey.mediaTrackPrevious) {
++                _seekRelative(const Duration(seconds: -30));
++                return KeyEventResult.handled;
+               } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft ||
+                   event.logicalKey == LogicalKeyboardKey.keyJ) {
+                 _seekRelative(const Duration(seconds: -10));
+diff --git a/lib/pages/search/search_page.dart b/lib/pages/search/search_page.dart
+index e626c3c..dfaa810 100644
+--- a/lib/pages/search/search_page.dart
++++ b/lib/pages/search/search_page.dart
+@@ -16,6 +16,7 @@ import '../../widgets/movie/movie_slider_section.dart';
+ import '../../widgets/search/magnet_files_view.dart';
+ import '../ai/wewatch_quiz_page.dart';
+ import '../player/player_screen.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class SearchPage extends StatefulWidget {
+   const SearchPage({super.key});
+@@ -611,7 +612,7 @@ class _SearchPageState extends State<SearchPage> {
+                     letterSpacing: 1.1,
+                   ),
+                 ),
+-                GestureDetector(
++                TvTap(
+                   onTap: _clearSearchHistory,
+                   child: const Text(
+                     'Clear All',
+diff --git a/lib/pages/settings/addons_settings_page.dart b/lib/pages/settings/addons_settings_page.dart
+index 45fee64..44c8213 100644
+--- a/lib/pages/settings/addons_settings_page.dart
++++ b/lib/pages/settings/addons_settings_page.dart
+@@ -10,6 +10,7 @@ import '../../services/cloudstream/cloudstream_manager.dart';
+ import '../../services/cloudstream/runtime/cloudstream_downloader.dart';
+ import 'cloudstream_marketplace_modal.dart';
+ import 'cloudstream_repo_modal.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class AddonsSettingsPage extends StatefulWidget {
+   const AddonsSettingsPage({super.key});
+@@ -973,7 +974,7 @@ class _AddonsSettingsPageState extends State<AddonsSettingsPage> {
+         ),
+ 
+         // Repository Marketplace Banner Card
+-        GestureDetector(
++        TvTap(
+           onTap: () async {
+             await CloudStreamMarketplaceModal.show(context);
+             if (mounted) setState(() {});
+@@ -1091,7 +1092,7 @@ class _AddonsSettingsPageState extends State<AddonsSettingsPage> {
+           builder: (context, constraints) {
+             final isNarrow = constraints.maxWidth < 520;
+ 
+-            final browseBtn = GestureDetector(
++            final browseBtn = TvTap(
+               onTap: () async {
+                 await CloudStreamRepoModal.show(context);
+                 if (mounted) setState(() {});
+@@ -1132,7 +1133,7 @@ class _AddonsSettingsPageState extends State<AddonsSettingsPage> {
+               ),
+             );
+ 
+-            final addRepoBtn = GestureDetector(
++            final addRepoBtn = TvTap(
+               onTap: _isAddingCsRepo ? null : _addCsRepo,
+               child: Container(
+                 padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 12),
+@@ -2051,7 +2052,7 @@ class _FeatureToggleChipState extends State<_FeatureToggleChip> {
+       cursor: SystemMouseCursors.click,
+       onEnter: (_) => setState(() => _hovered = true),
+       onExit: (_) => setState(() => _hovered = false),
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: const Duration(milliseconds: 180),
+@@ -2134,7 +2135,7 @@ class _AddAddonButton extends StatelessWidget {
+ 
+   @override
+   Widget build(BuildContext context) {
+-    return GestureDetector(
++    return TvTap(
+       onTap: isLoading ? null : onTap,
+       child: AnimatedContainer(
+         duration: const Duration(milliseconds: 200),
+@@ -2197,7 +2198,7 @@ class _TabButton extends StatelessWidget {
+ 
+   @override
+   Widget build(BuildContext context) {
+-    return GestureDetector(
++    return TvTap(
+       onTap: onTap,
+       child: AnimatedContainer(
+         duration: const Duration(milliseconds: 200),
+@@ -2301,7 +2302,7 @@ class _CloudStreamCard extends StatelessWidget {
+       child: Row(
+         children: [
+           // Checkmark Selection Button
+-          GestureDetector(
++          TvTap(
+             behavior: HitTestBehavior.opaque,
+             onTap: onSelectToggle,
+             child: Padding(
+@@ -2361,7 +2362,7 @@ class _CloudStreamCard extends StatelessWidget {
+ 
+           // Details (Tap details area also toggles selection!)
+           Expanded(
+-            child: GestureDetector(
++            child: TvTap(
+               behavior: HitTestBehavior.opaque,
+               onTap: onSelectToggle,
+               child: Column(
+diff --git a/lib/pages/settings/appearance/audiobook_player_studio_page.dart b/lib/pages/settings/appearance/audiobook_player_studio_page.dart
+index 519c117..8e936fd 100644
+--- a/lib/pages/settings/appearance/audiobook_player_studio_page.dart
++++ b/lib/pages/settings/appearance/audiobook_player_studio_page.dart
+@@ -8,6 +8,7 @@ import '../../../services/theme/app_theme_service.dart';
+ import '../../../services/audiobook/audiobook_settings.dart';
+ import '../../../widgets/audiobook/audiobook_interactive_physics_button.dart';
+ import '../../../widgets/audiobook/audiobook_waveform_seekbar.dart';
++import '../../../widgets/common/tv_focusable.dart';
+ 
+ class AudiobookPlayerStudioPage extends StatefulWidget {
+   const AudiobookPlayerStudioPage({super.key});
+@@ -779,13 +780,13 @@ class _AudiobookPlayerStudioPageState extends State<AudiobookPlayerStudioPage> w
+   }
+ 
+   Widget _buildChaptersPreviewOverlay(AppThemePalette palette) {
+-    return GestureDetector(
++    return TvTap(
+       onTap: () => setState(() => _showChaptersPreview = false),
+       child: Container(
+         color: Colors.black.withValues(alpha: 0.7),
+         child: Align(
+           alignment: Alignment.bottomCenter,
+-          child: GestureDetector(
++          child: TvTap(
+             onTap: () {},
+             child: Container(
+               height: 280,
+diff --git a/lib/pages/settings/appearance/audiobook_settings_page.dart b/lib/pages/settings/appearance/audiobook_settings_page.dart
+index 5b75009..780645a 100644
+--- a/lib/pages/settings/appearance/audiobook_settings_page.dart
++++ b/lib/pages/settings/appearance/audiobook_settings_page.dart
+@@ -7,6 +7,7 @@ import '../../../widgets/audiobook/audiobook_interactive_physics_button.dart';
+ import '../../../widgets/audiobook/audiobook_waveform_seekbar.dart';
+ import '../../../widgets/common/animated_ambient_background.dart';
+ import 'audiobook_player_studio_page.dart';
++import '../../../widgets/common/tv_focusable.dart';
+ 
+ class AudiobookSettingsPage extends StatefulWidget {
+   const AudiobookSettingsPage({super.key});
+@@ -863,7 +864,7 @@ class _AudiobookSettingsPageState extends State<AudiobookSettingsPage> {
+                     ValueListenableBuilder<AudiobookPlayButtonStyle>(
+                       valueListenable: AudiobookSettings.customPlayButtonStyle,
+                       builder: (context, playBtnStyle, _) {
+-                        return GestureDetector(
++                        return TvTap(
+                           onTap: () => setState(() => _previewIsPlaying = !_previewIsPlaying),
+                           child: _buildCustomPlayButtonWidget(playBtnStyle, palette, _previewIsPlaying),
+                         );
+diff --git a/lib/pages/settings/cloudstream_marketplace_modal.dart b/lib/pages/settings/cloudstream_marketplace_modal.dart
+index c620c7b..bdfb921 100644
+--- a/lib/pages/settings/cloudstream_marketplace_modal.dart
++++ b/lib/pages/settings/cloudstream_marketplace_modal.dart
+@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
+ import '../../services/cloudstream/cloudstream_manager.dart';
+ import '../../services/cloudstream/marketplace/cloudstream_marketplace_service.dart';
+ import 'cloudstream_repo_modal.dart';
++import '../../widgets/common/tv_focusable.dart';
+ 
+ class CloudStreamMarketplaceModal extends StatefulWidget {
+   const CloudStreamMarketplaceModal({super.key});
+@@ -485,7 +486,7 @@ class _CloudStreamMarketplaceModalState extends State<CloudStreamMarketplaceModa
+ 
+                         return Padding(
+                           padding: const EdgeInsets.only(right: 8),
+-                          child: GestureDetector(
++                          child: TvTap(
+                             onTap: () => setState(() => _selectedCategory = cat),
+                             child: AnimatedContainer(
+                               duration: const Duration(milliseconds: 180),
+@@ -756,7 +757,7 @@ class _CloudStreamMarketplaceModalState extends State<CloudStreamMarketplaceModa
+                                           ),
+                                         ),
+                                         const SizedBox(width: 4),
+-                                        GestureDetector(
++                                        TvTap(
+                                           onTap: () {
+                                             Clipboard.setData(ClipboardData(text: repo.url));
+                                             ScaffoldMessenger.of(context).showSnackBar(
+diff --git a/lib/utils/tv/tv_mode.dart b/lib/utils/tv/tv_mode.dart
+new file mode 100644
+index 0000000..3f8cef3
+--- /dev/null
++++ b/lib/utils/tv/tv_mode.dart
+@@ -0,0 +1,59 @@
++import 'dart:io';
++
++import 'package:flutter/widgets.dart' show Orientation;
++import 'package:flutter/services.dart';
++import 'package:shared_preferences/shared_preferences.dart';
++
++/// TV detection + app-wide orientation policy.
++///
++///  * Fire TV / Android TV  -> always landscape.
++///  * Phones / tablets      -> sensor ON  = all 4 directions,
++///                             sensor OFF = locked to the orientation it was in.
++class TvMode {
++  TvMode._();
++
++  static const MethodChannel _channel = MethodChannel('com.example.playtorrio/power');
++  static const String _prefKey = 'rotate_sensor_on';
++
++  static bool isTv = false;
++  static bool sensorOn = true;
++  static List<DeviceOrientation> lockedOrientations = const [DeviceOrientation.portraitUp];
++
++  static Future<void> init() async {
++    if (Platform.isAndroid) {
++      try {
++        isTv = (await _channel.invokeMethod<bool>('isTv')) ?? false;
++      } catch (_) {
++        isTv = false;
++      }
++    }
++    try {
++      final prefs = await SharedPreferences.getInstance();
++      sensorOn = prefs.getBool(_prefKey) ?? true;
++    } catch (_) {}
++  }
++
++  static Future<void> setSensorOn(bool value, {Orientation? current}) async {
++    sensorOn = value;
++    if (!value) {
++      lockedOrientations = current == Orientation.landscape
++          ? const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
++          : const [DeviceOrientation.portraitUp];
++    }
++    try {
++      final prefs = await SharedPreferences.getInstance();
++      await prefs.setBool(_prefKey, value);
++    } catch (_) {}
++    await applyOrientations();
++  }
++
++  /// Orientations the app should use when no screen forces its own.
++  static List<DeviceOrientation> get appOrientations {
++    if (isTv) {
++      return const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight];
++    }
++    return sensorOn ? DeviceOrientation.values : lockedOrientations;
++  }
++
++  static Future<void> applyOrientations() => SystemChrome.setPreferredOrientations(appOrientations);
++}
+diff --git a/lib/widgets/anime/anime_card.dart b/lib/widgets/anime/anime_card.dart
+index 7c34db8..d41300b 100644
+--- a/lib/widgets/anime/anime_card.dart
++++ b/lib/widgets/anime/anime_card.dart
+@@ -1,5 +1,6 @@
+ import 'package:cached_network_image/cached_network_image.dart';
+ import 'package:flutter/material.dart';
++import '../common/tv_focusable.dart';
+ 
+ import '../../models/anime/anime_media.dart';
+ import '../../services/theme/app_theme_service.dart';
+@@ -27,6 +28,14 @@ class _AnimeCardState extends State<AnimeCard> {
+ 
+   @override
+   Widget build(BuildContext context) {
++    return TvFocusable(
++      radius: 18,
++      onTap: widget.onTap,
++      child: _buildCard(context),
++    );
++  }
++
++  Widget _buildCard(BuildContext context) {
+     final anime = widget.anime;
+ 
+     return MouseRegion(
+diff --git a/lib/widgets/common/liquid_dock.dart b/lib/widgets/common/liquid_dock.dart
+index 4ea8917..fc2bfd2 100644
+--- a/lib/widgets/common/liquid_dock.dart
++++ b/lib/widgets/common/liquid_dock.dart
+@@ -1,6 +1,7 @@
+ import 'dart:math' as math;
+ 
+ import 'package:flutter/material.dart';
++import 'tv_focusable.dart';
+ import 'package:liquid_glass_easy/liquid_glass_easy.dart';
+ 
+ import '../../services/theme/glass_settings.dart';
+@@ -375,6 +376,14 @@ class _DockItemWidgetState extends State<_DockItemWidget> {
+ 
+   @override
+   Widget build(BuildContext context) {
++    return TvFocusable(
++      radius: 18,
++      onTap: widget.item.onTap,
++      child: _buildInner(),
++    );
++  }
++
++  Widget _buildInner() {
+     return RepaintBoundary(
+       child: ValueListenableBuilder<bool>(
+         valueListenable: GlassSettings.enabled,
+diff --git a/lib/widgets/common/orientation_toggle.dart b/lib/widgets/common/orientation_toggle.dart
+new file mode 100644
+index 0000000..b1b6f92
+--- /dev/null
++++ b/lib/widgets/common/orientation_toggle.dart
+@@ -0,0 +1,61 @@
++import 'package:flutter/material.dart';
++
++import '../../utils/tv/tv_mode.dart';
++
++/// Small floating button (phones/tablets only) that switches the screen
++/// sensor between AUTO (all 4 directions) and LOCKED (current orientation).
++class OrientationToggleOverlay extends StatefulWidget {
++  const OrientationToggleOverlay({super.key, required this.child});
++
++  final Widget child;
++
++  @override
++  State<OrientationToggleOverlay> createState() => _OrientationToggleOverlayState();
++}
++
++class _OrientationToggleOverlayState extends State<OrientationToggleOverlay> {
++  Future<void> _toggle() async {
++    final orientation = MediaQuery.of(context).orientation;
++    await TvMode.setSensorOn(!TvMode.sensorOn, current: orientation);
++    if (mounted) setState(() {});
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    if (TvMode.isTv) return widget.child;
++    return Directionality(
++      textDirection: TextDirection.ltr,
++      child: Stack(
++        children: [
++          widget.child,
++          Positioned(
++            right: 0,
++            top: 0,
++            bottom: 0,
++            child: Center(
++              child: GestureDetector(
++                behavior: HitTestBehavior.opaque,
++                onTap: _toggle,
++                child: Opacity(
++                  opacity: 0.55,
++                  child: Container(
++                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
++                    decoration: const BoxDecoration(
++                      color: Color(0xCC000000),
++                      borderRadius: BorderRadius.horizontal(left: Radius.circular(12)),
++                    ),
++                    child: Icon(
++                      TvMode.sensorOn ? Icons.screen_rotation : Icons.screen_lock_rotation,
++                      color: Colors.white,
++                      size: 20,
++                    ),
++                  ),
++                ),
++              ),
++            ),
++          ),
++        ],
++      ),
++    );
++  }
++}
+diff --git a/lib/widgets/common/tv_focusable.dart b/lib/widgets/common/tv_focusable.dart
+new file mode 100644
+index 0000000..770651d
+--- /dev/null
++++ b/lib/widgets/common/tv_focusable.dart
+@@ -0,0 +1,219 @@
++import 'package:flutter/material.dart';
++import 'package:flutter/services.dart';
++
++/// Focus highlight colour used everywhere for remote / D-pad navigation.
++const Color kTvFocusBlue = Color(0xFF2979FF);
++
++/// Makes any widget reachable with a D-pad / remote.
++///
++///  * Arrow keys move focus (Flutter's directional traversal).
++///  * OK / Select / Enter / Gamepad-A  -> [onTap]
++///  * Hold OK, or press Menu / Gamepad-X -> [onLongPress]
++///  * Focused: blue overlay fading from 0 to 50 % opacity + solid blue border.
++///  * [selected]: persistent blue tint, border and a check badge (selection mode).
++///
++/// Touch input is untouched: put the real tap handling on the child as before
++/// and pass the same callbacks here for key activation.
++class TvFocusable extends StatefulWidget {
++  const TvFocusable({
++    super.key,
++    required this.child,
++    this.onTap,
++    this.onLongPress,
++    this.radius = 16,
++    this.autofocus = false,
++    this.selected = false,
++    this.focusNode,
++  });
++
++  final Widget child;
++  final VoidCallback? onTap;
++  final VoidCallback? onLongPress;
++  final double radius;
++  final bool autofocus;
++  final bool selected;
++  final FocusNode? focusNode;
++
++  @override
++  State<TvFocusable> createState() => _TvFocusableState();
++}
++
++class _TvFocusableState extends State<TvFocusable> {
++  FocusNode? _ownNode;
++  bool _focused = false;
++  bool _keyDown = false;
++  bool _holdFired = false;
++
++  FocusNode get _node => widget.focusNode ?? (_ownNode ??= FocusNode(debugLabel: 'TvFocusable'));
++
++  @override
++  void initState() {
++    super.initState();
++    _node.addListener(_refresh);
++    FocusManager.instance.addHighlightModeListener(_onHighlightMode);
++  }
++
++  @override
++  void didUpdateWidget(covariant TvFocusable oldWidget) {
++    super.didUpdateWidget(oldWidget);
++    if (oldWidget.focusNode != widget.focusNode) {
++      (oldWidget.focusNode ?? _ownNode)?.removeListener(_refresh);
++      _node.addListener(_refresh);
++    }
++  }
++
++  @override
++  void dispose() {
++    FocusManager.instance.removeHighlightModeListener(_onHighlightMode);
++    _node.removeListener(_refresh);
++    _ownNode?.dispose();
++    super.dispose();
++  }
++
++  void _onHighlightMode(FocusHighlightMode mode) => _refresh();
++
++  void _refresh() {
++    if (!mounted) return;
++    final f = _node.hasFocus;
++    if (f != _focused) {
++      setState(() => _focused = f);
++    } else {
++      setState(() {});
++    }
++  }
++
++  bool get _showHighlight =>
++      _focused && FocusManager.instance.highlightMode == FocusHighlightMode.traditional;
++
++  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
++    final k = event.logicalKey;
++    final isOk = k == LogicalKeyboardKey.select ||
++        k == LogicalKeyboardKey.enter ||
++        k == LogicalKeyboardKey.numpadEnter ||
++        k == LogicalKeyboardKey.gameButtonA;
++    final isMenu = k == LogicalKeyboardKey.contextMenu || k == LogicalKeyboardKey.gameButtonX;
++
++    if (isMenu) {
++      if (event is KeyDownEvent && widget.onLongPress != null) {
++        widget.onLongPress!();
++        return KeyEventResult.handled;
++      }
++      return KeyEventResult.ignored;
++    }
++    if (!isOk) return KeyEventResult.ignored;
++
++    if (event is KeyDownEvent) {
++      _keyDown = true;
++      _holdFired = false;
++      return KeyEventResult.handled;
++    }
++    if (event is KeyRepeatEvent) {
++      if (_keyDown && !_holdFired && widget.onLongPress != null) {
++        _holdFired = true;
++        widget.onLongPress!();
++      }
++      return KeyEventResult.handled;
++    }
++    if (event is KeyUpEvent) {
++      final fire = _keyDown && !_holdFired;
++      _keyDown = false;
++      _holdFired = false;
++      if (fire) widget.onTap?.call();
++      return KeyEventResult.handled;
++    }
++    return KeyEventResult.ignored;
++  }
++
++  @override
++  Widget build(BuildContext context) {
++    final show = _showHighlight;
++    final sel = widget.selected;
++    final radius = BorderRadius.circular(widget.radius);
++
++    final Color fill = sel
++        ? kTvFocusBlue.withValues(alpha: show ? 0.55 : 0.35)
++        : kTvFocusBlue.withValues(alpha: show ? 0.5 : 0.0);
++    final Color border = (show || sel) ? kTvFocusBlue : Colors.transparent;
++
++    return Focus(
++      focusNode: _node,
++      autofocus: widget.autofocus,
++      onKeyEvent: _onKey,
++      child: AnimatedScale(
++        scale: show ? 1.04 : 1.0,
++        duration: const Duration(milliseconds: 140),
++        curve: Curves.easeOutCubic,
++        child: Stack(
++          fit: StackFit.passthrough,
++          clipBehavior: Clip.none,
++          children: [
++            widget.child,
++            Positioned.fill(
++              child: IgnorePointer(
++                child: AnimatedContainer(
++                  duration: const Duration(milliseconds: 160),
++                  curve: Curves.easeOut,
++                  decoration: BoxDecoration(
++                    color: fill,
++                    borderRadius: radius,
++                    border: Border.all(color: border, width: 3),
++                  ),
++                ),
++              ),
++            ),
++            if (sel)
++              Positioned(
++                top: 8,
++                left: 8,
++                child: IgnorePointer(
++                  child: Container(
++                    width: 26,
++                    height: 26,
++                    decoration: const BoxDecoration(
++                      color: kTvFocusBlue,
++                      shape: BoxShape.circle,
++                    ),
++                    child: const Icon(Icons.check_rounded, size: 18, color: Colors.white),
++                  ),
++                ),
++              ),
++          ],
++        ),
++      ),
++    );
++  }
++}
++
++/// Drop-in replacement for a simple `GestureDetector(onTap/onLongPress/child)`
++/// that is also reachable and activatable with a remote / D-pad.
++class TvTap extends StatelessWidget {
++  const TvTap({
++    super.key,
++    this.onTap,
++    this.onLongPress,
++    this.behavior,
++    this.radius = 12,
++    required this.child,
++  });
++
++  final VoidCallback? onTap;
++  final VoidCallback? onLongPress;
++  final HitTestBehavior? behavior;
++  final double radius;
++  final Widget child;
++
++  @override
++  Widget build(BuildContext context) {
++    return TvFocusable(
++      radius: radius,
++      onTap: onTap,
++      onLongPress: onLongPress,
++      child: GestureDetector(
++        behavior: behavior,
++        onTap: onTap,
++        onLongPress: onLongPress,
++        child: child,
++      ),
++    );
++  }
++}
+diff --git a/lib/widgets/home/continue_watching_slider.dart b/lib/widgets/home/continue_watching_slider.dart
+index c33db6b..9d099fa 100644
+--- a/lib/widgets/home/continue_watching_slider.dart
++++ b/lib/widgets/home/continue_watching_slider.dart
+@@ -13,6 +13,7 @@ import '../../utils/navigation/route_transitions.dart';
+ import '../../services/theme/app_theme_service.dart';
+ import '../../services/continue_watching/continue_watching_service.dart';
+ import '../common/slider_arrow.dart';
++import '../common/tv_focusable.dart';
+ 
+ class ContinueWatchingSlider extends StatefulWidget {
+   final String? typeFilter; // 'main', 'anime', or null for all
+@@ -351,7 +352,7 @@ class _ContinueWatchingCardState extends State<_ContinueWatchingCard> {
+     return MouseRegion(
+       onEnter: (_) => setState(() => _isHovered = true),
+       onExit: (_) => setState(() => _isHovered = false),
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: const Duration(milliseconds: 200),
+@@ -458,7 +459,7 @@ class _ContinueWatchingCardState extends State<_ContinueWatchingCard> {
+                             // Details Button
+                             Tooltip(
+                               message: 'View Details',
+-                              child: GestureDetector(
++                              child: TvTap(
+                                 onTap: () => _openDetails(context),
+                                 child: Container(
+                                   padding: const EdgeInsets.all(4),
+@@ -482,7 +483,7 @@ class _ContinueWatchingCardState extends State<_ContinueWatchingCard> {
+                             // Dismiss / Remove Button
+                             Tooltip(
+                               message: 'Remove from Continue Watching',
+-                              child: GestureDetector(
++                              child: TvTap(
+                                 onTap: widget.onRemove,
+                                 child: Container(
+                                   padding: const EdgeInsets.all(4),
+diff --git a/lib/widgets/iptv/iptv_channel_card.dart b/lib/widgets/iptv/iptv_channel_card.dart
+index 50d50dc..cfd8cce 100644
+--- a/lib/widgets/iptv/iptv_channel_card.dart
++++ b/lib/widgets/iptv/iptv_channel_card.dart
+@@ -1,5 +1,6 @@
+ import 'package:cached_network_image/cached_network_image.dart';
+ import 'package:flutter/material.dart';
++import '../common/tv_focusable.dart';
+ import '../../services/theme/app_theme_service.dart';
+ import '../../services/iptv/hardcoded_channels.dart';
+ import '../../services/iptv/iptv_settings.dart';
+@@ -28,6 +29,14 @@ class _IptvChannelCardState extends State<IptvChannelCard> {
+ 
+   @override
+   Widget build(BuildContext context) {
++    return TvFocusable(
++      radius: 18,
++      onTap: widget.onTap,
++      child: _buildCard(context),
++    );
++  }
++
++  Widget _buildCard(BuildContext context) {
+     final ch = widget.channel;
+     final palette = AppThemeService.currentPalette.value;
+     final primaryColor = ch.gradient.isNotEmpty ? ch.gradient.first : palette.primaryColor;
+diff --git a/lib/widgets/iptv/iptv_hero_carousel.dart b/lib/widgets/iptv/iptv_hero_carousel.dart
+index 328efb0..09c3b6c 100644
+--- a/lib/widgets/iptv/iptv_hero_carousel.dart
++++ b/lib/widgets/iptv/iptv_hero_carousel.dart
+@@ -6,6 +6,7 @@ import '../../services/theme/app_theme_service.dart';
+ import '../../services/home/home_page_settings.dart';
+ import '../../services/iptv/hardcoded_channels.dart';
+ import '../../services/iptv/iptv_settings.dart';
++import '../common/tv_focusable.dart';
+ 
+ class IptvHeroCarousel extends StatefulWidget {
+   final List<HardcodedChannel> channels;
+@@ -176,7 +177,7 @@ class _IptvHeroCarouselState extends State<IptvHeroCarousel> {
+                       mainAxisSize: MainAxisSize.min,
+                       children: List.generate(
+                         widget.channels.length,
+-                        (index) => GestureDetector(
++                        (index) => TvTap(
+                           onTap: () {
+                             _pageController.animateToPage(
+                               index,
+@@ -428,7 +429,7 @@ class _IptvHeroSlide extends StatelessWidget {
+                   // Primary Watch Live Button
+                   MouseRegion(
+                     cursor: SystemMouseCursors.click,
+-                    child: GestureDetector(
++                    child: TvTap(
+                       onTap: onWatchNow,
+                       child: Container(
+                         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+@@ -470,7 +471,7 @@ class _IptvHeroSlide extends StatelessWidget {
+                   // Sources / Stream Selector Pill
+                   MouseRegion(
+                     cursor: SystemMouseCursors.click,
+-                    child: GestureDetector(
++                    child: TvTap(
+                       onTap: onSourcesTap,
+                       child: Container(
+                         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+@@ -529,7 +530,7 @@ class _HeroArrowButtonState extends State<_HeroArrowButton> {
+       cursor: SystemMouseCursors.click,
+       onEnter: (_) => setState(() => _isHovering = true),
+       onExit: (_) => setState(() => _isHovering = false),
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: const Duration(milliseconds: 200),
+diff --git a/lib/widgets/manga/manga_card.dart b/lib/widgets/manga/manga_card.dart
+index edc5883..883f9f6 100644
+--- a/lib/widgets/manga/manga_card.dart
++++ b/lib/widgets/manga/manga_card.dart
+@@ -1,5 +1,6 @@
+ import 'package:cached_network_image/cached_network_image.dart';
+ import 'package:flutter/material.dart';
++import '../common/tv_focusable.dart';
+ 
+ import '../../models/manga/manga.dart';
+ import '../../pages/manga/manga_details_page.dart';
+@@ -89,6 +90,28 @@ class _MangaCardState extends State<MangaCard> {
+ 
+   @override
+   Widget build(BuildContext context) {
++    return TvFocusable(
++      radius: 18,
++      onTap: _activate,
++      child: _buildCard(context),
++    );
++  }
++
++  void _activate() {
++    if (widget.onTap != null) {
++      widget.onTap!();
++      return;
++    }
++    Navigator.push(
++      context,
++      LiquidRevealRoute(
++        page: MangaDetailsPage(manga: widget.manga),
++        tapPosition: null,
++      ),
++    );
++  }
++
++  Widget _buildCard(BuildContext context) {
+     final manga = widget.manga;
+     final palette = AppThemeService.currentPalette.value;
+     final showYear = MangaSettings.showMangaYear.value;
+diff --git a/lib/widgets/manga/manga_category_dropdown.dart b/lib/widgets/manga/manga_category_dropdown.dart
+index 4fffbaf..47a2562 100644
+--- a/lib/widgets/manga/manga_category_dropdown.dart
++++ b/lib/widgets/manga/manga_category_dropdown.dart
+@@ -1,6 +1,7 @@
+ import 'dart:ui';
+ import 'package:flutter/material.dart';
+ import '../../services/theme/app_theme_service.dart';
++import '../common/tv_focusable.dart';
+ 
+ class MangaCategoryDropdown extends StatefulWidget {
+   final String selectedGenre;
+@@ -187,7 +188,7 @@ class _MangaCategoryDropdownState extends State<MangaCategoryDropdown>
+         onEnter: (_) => setState(() => _isHovered = true),
+         onExit: (_) => setState(() => _isHovered = false),
+         cursor: SystemMouseCursors.click,
+-        child: GestureDetector(
++        child: TvTap(
+           onTap: _toggleDropdown,
+           child: AnimatedContainer(
+             duration: const Duration(milliseconds: 200),
+@@ -402,7 +403,7 @@ class _DropdownOverlayContentState extends State<_DropdownOverlayContent> {
+       children: [
+         // Full screen invisible barrier to dismiss dropdown on tap
+         Positioned.fill(
+-          child: GestureDetector(
++          child: TvTap(
+             behavior: HitTestBehavior.opaque,
+             onTap: widget.onClose,
+             child: const SizedBox.expand(),
+@@ -697,7 +698,7 @@ class _CategoryItemTileState extends State<_CategoryItemTile> {
+       onEnter: (_) => setState(() => _isHovered = true),
+       onExit: (_) => setState(() => _isHovered = false),
+       cursor: SystemMouseCursors.click,
+-      child: GestureDetector(
++      child: TvTap(
+         onTap: widget.onTap,
+         child: AnimatedContainer(
+           duration: const Duration(milliseconds: 160),
+diff --git a/lib/widgets/movie/movie_card.dart b/lib/widgets/movie/movie_card.dart
+index 0888fde..59faabc 100644
+--- a/lib/widgets/movie/movie_card.dart
++++ b/lib/widgets/movie/movie_card.dart
+@@ -1,5 +1,6 @@
+ import 'package:cached_network_image/cached_network_image.dart';
+ import 'package:flutter/material.dart';
++import '../common/tv_focusable.dart';
+ 
+ import '../../models/movie/movie.dart';
+ import '../../pages/details/details_page.dart';
+@@ -95,6 +96,28 @@ class _MovieCardState extends State<MovieCard> {
+ 
+   @override
+   Widget build(BuildContext context) {
++    return TvFocusable(
++      radius: 18,
++      onTap: _activate,
++      child: _buildCard(context),
++    );
++  }
++
++  void _activate() {
++    if (widget.onTap != null) {
++      widget.onTap!();
++      return;
++    }
++    Navigator.push(
++      context,
++      LiquidRevealRoute(
++        page: DetailsPage(movie: widget.movie),
++        tapPosition: null,
++      ),
++    );
++  }
++
++  Widget _buildCard(BuildContext context) {
+     final movie = widget.movie;
+ 
+     return MouseRegion(
+diff --git a/lib/widgets/search/magnet_files_view.dart b/lib/widgets/search/magnet_files_view.dart
+index d63d052..f809c86 100644
+--- a/lib/widgets/search/magnet_files_view.dart
++++ b/lib/widgets/search/magnet_files_view.dart
+@@ -4,6 +4,7 @@ import '../../pages/player/player_screen.dart';
+ import '../../services/theme/app_theme_service.dart';
+ import '../../services/debrid/debrid_service.dart';
+ import '../../services/stream/torrent_stream_service.dart';
++import '../common/tv_focusable.dart';
+ 
+ class MagnetFileItem {
+   final int id;
+@@ -581,7 +582,7 @@ class _MagnetFilesViewState extends State<MagnetFilesView> {
+ 
+   Widget _buildCategoryChip(String category, String label, AppThemePalette palette) {
+     final isSelected = _activeCategory == category;
+-    return GestureDetector(
++    return TvTap(
+       onTap: () => setState(() => _activeCategory = category),
+       child: AnimatedContainer(
+         duration: const Duration(milliseconds: 180),
