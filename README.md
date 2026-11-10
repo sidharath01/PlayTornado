@@ -163,3 +163,6 @@ PlayTorrio is a media player and aggregator. It doesn't host or store any conten
 <p align="center">
   Built by <a href="https://github.com/ayman708-UX">Ayman</a>
 </p>
+<p align="center">
+  Forked & modified by <a href="https://github.com/sidharath01">**URJ-Torn**</a>
+</p>
