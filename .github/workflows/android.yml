@@ -1,1 +1,67 @@
+name: Build Android APK (URJ-Torn)
 
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: 'stable'
+          cache: true
+
+      - name: Setup .env from GitHub Secrets
+        shell: bash
+        env:
+          ENV_FILE_SECRET: ${{ secrets.ENV_FILE }}
+          DOTENV_SECRET: ${{ secrets.DOTENV }}
+        run: |
+          if [ -n "$ENV_FILE_SECRET" ]; then
+            printf '%s\n' "$ENV_FILE_SECRET" > .env
+          elif [ -n "$DOTENV_SECRET" ]; then
+            printf '%s\n' "$DOTENV_SECRET" > .env
+          else
+            touch .env
+          fi
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build APKs (split per ABI)
+        run: flutter build apk --release --split-per-abi --dart-define-from-file=.env
+
+      - name: Rename APKs to URJ-Torn
+        shell: bash
+        run: |
+          cd build/app/outputs/flutter-apk
+          for f in app-*.apk; do
+            newname="URJ-Torn-${f#app-}"
+            mv "$f" "$newname"
+            echo "Created: $newname"
+          done
+
+      - name: Upload Android APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: URJ-Torn-Android
+          path: build/app/outputs/flutter-apk/URJ-Torn-*.apk
+          if-no-files-found: error
