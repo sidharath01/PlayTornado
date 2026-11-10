@@ -3,13 +3,13 @@
 ;  Built by CI from: build\windows\x64\runner\Release\
 ; ──────────────────────────────────────────────────────────────────────────────
 
-#define MyAppName      "PlayTorrio"
+#define MyAppName      "URJ-Torn"
 #ifndef MyAppVersion
 #define MyAppVersion   "1.1.6"
 #endif
-#define MyAppPublisher "ayman708-UX"
-#define MyAppExeName   "playtorrio.exe"
-#define MyAppURL       "https://github.com/ayman708-UX/PlayTorrioV3"
+#define MyAppPublisher "SiDD"
+#define MyAppExeName   "urj_torn.exe"
+#define MyAppURL       "https://github.com/sidharath01/PlayTornado"
 
 [Setup]
 AppId={{9B8C7D6E-5F4E-3D2C-1B0A-9F8E7D6C5B4A}
