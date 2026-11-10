@@ -1,9 +1,9 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:playtorrio/services/scraper/sites/vidapi.dart';
-import 'package:playtorrio/services/scraper/sites/vidrock.dart';
-import 'package:playtorrio/services/scraper/sites/vidvault.dart';
-import 'package:playtorrio/services/scraper/sites/vidzee.dart';
+import 'package:urj_torn/services/scraper/sites/vidapi.dart';
+import 'package:urj_torn/services/scraper/sites/vidrock.dart';
+import 'package:urj_torn/services/scraper/sites/vidvault.dart';
+import 'package:urj_torn/services/scraper/sites/vidzee.dart';
 
 class _AllowAllHttpOverrides extends HttpOverrides {}
 

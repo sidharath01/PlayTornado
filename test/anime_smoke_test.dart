@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:playtorrio/models/anime/anime_media.dart';
-import 'package:playtorrio/services/anime/anilist_service.dart';
-import 'package:playtorrio/services/anime/anime_scraper_service.dart';
+import 'package:urj_torn/models/anime/anime_media.dart';
+import 'package:urj_torn/services/anime/anilist_service.dart';
+import 'package:urj_torn/services/anime/anime_scraper_service.dart';
 
 void main() {
   test('AnimeMedia AniList JSON parsing and getters', () {

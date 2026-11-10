@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:playtorrio/models/stream/stream_model.dart';
-import 'package:playtorrio/services/stream/stream_bitrate_resolver.dart';
+import 'package:urj_torn/models/stream/stream_model.dart';
+import 'package:urj_torn/services/stream/stream_bitrate_resolver.dart';
 
 void main() {
   group('StreamBitrateResolver Tests', () {
